@@ -1,0 +1,76 @@
+#!/bin/sh
+
+#
+# edge_iq_conf - Edge iq configuration utility
+#
+# This script performs several functions related to the Edge IQ
+# configuration on the IG60.  The following
+# options are supported:
+#
+# usage: edge_iq_config <option>
+#
+# where:
+#
+#    <option> - One of the following:
+#
+# check - Checks for an existing edge installation
+#   Returns 0 if edge is properly installed and configured, else 1
+#
+# install - Installs edge with tarball from srcdir,
+#   Returns 0 if successful, else 1
+#
+
+if [ $# -lt 1 ]; then
+	echo "$0: Invalid arguments"
+	exit 3
+fi
+
+GG_ROOT_DIR=/gg
+OPT_DIR=/opt
+
+if [ -d ${GG_ROOT_DIR} ]; then
+	EDGE_INSTALL_DIR=${GG_ROOT_DIR}/edge
+else
+	EDGE_INSTALL_DIR=${OPT_DIR}/edge
+fi
+
+case "$1" in
+	check)
+		# Spot check some Edge directories and files
+		echo "$0: Checking install dir"
+		[ -x $EDGE_INSTALL_DIR ] || exit 1
+		echo "$0: Checking conf dir"
+		[ -x ${EDGE_INSTALL_DIR}/conf ] || exit 1
+		echo "$0: Checking init dir"
+		[ -x ${EDGE_INSTALL_DIR}/init ] || exit 1
+		echo "$0: Checking for edge"
+		[ -x ${EDGE_INSTALL_DIR}/edge ] || exit 1
+		echo "$0: Edge is installed."
+		echo "$0: Checking configuration"
+		[ -e ${EDGE_INSTALL_DIR}/conf/conf.json ] || exit 1
+		[ -e ${EDGE_INSTALL_DIR}/conf/bootstrap.json ] || exit 1
+		echo "$0: Configuration is valid."
+		exit 0
+		;;
+
+	install)
+		chmod +x ${EDGE_INSTALL_DIR}/edge
+
+		if [ -d ${GG_ROOT_DIR} ]; then
+	        	# Modify the edge.service file to use /gg
+			sed -i 's/ExecStart=\/opt\/edge\/edge/ExecStart=\/gg\/edge\/edge/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
+			sed -i 's/KillMode=process/KillMode=process\nKeyringMode=inherit/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
+			sed -i 's/StandardError=file:\/opt\/edge\/log\/stderr.log/StandardError=syslog/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
+			sed -i 's/ExecStart=\/opt\/greengrass\/ggc\/core\/greengrassd start/ExecStart=\/gg\/greengrass\/ggc\/core\/greengrassd start/' ${EDGE_INSTALL_DIR}/init/systemd/greengrass.service
+			sed -i 's/ExecReload=\/opt\/greengrass\/ggc\/core\/greengrassd restart/ExecReload=\/gg\/greengrass\/ggc\/core\/greengrassd restart/' ${EDGE_INSTALL_DIR}/init/systemd/greengrass.service
+			sed -i 's/ExecStop=\/opt\/greengrass\/ggc\/core\/greengrassd stop/ExecStop=\/gg\/greengrass\/ggc\/core\/greengrassd stop/' ${EDGE_INSTALL_DIR}/init/systemd/greengrass.service
+		fi
+
+		# Start edge
+		systemctl daemon-reload
+		systemctl start edge
+		exit 0
+		;;
+esac
+echo "$0: Invalid option"
+exit 3

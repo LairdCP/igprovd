@@ -1,0 +1,143 @@
+#!/bin/sh
+
+#
+# ggconf - Greengrass configuration utility
+#
+# This script performs several functions related to the Greengrass
+# core configuration on the Industrial Gateway.  The following
+# options are supported:
+#
+# usage: ggconf <option>
+# 
+# where:
+#
+#    <option> - One of the following:
+#
+# check - Checks for an existing Greengrass configuration
+#   Returns 0 if Greengrass is properly installed and configured, else 1
+#
+# install <srcdir> - Installs the Greengrass core with tarball from srcdir,
+#   and installs certificates and configuration file
+#   Returns 0 if successful, else 1
+#
+
+if [ $# -lt 1 ]; then
+	echo "$0: Invalid arguments"
+	exit 3
+fi
+
+GG_ROOT_DIR=/gg
+GG_INSTALL_DIR=${GG_ROOT_DIR}/greengrass
+GG_CORE_TARFILE=ggcore.tar.gz
+GG_BACKUP_DIR=/tmp/greengrass_backup
+SETDATE_HTTP=/usr/bin/setdate_http
+BT_FW_LOADER=btpa_firmware_loader.py
+BT_SERIAL_DEVICE=/dev/ttyS2
+BT_SERIAL_BAUD=115200
+BT_DEVICE_TYPE=IG60
+BT_FW_FILENAME=fw.uwf
+
+
+install_core()
+{
+	echo "$0: Preparing installation directory"
+	[ -d ${GG_INSTALL_DIR} ] && mv ${GG_INSTALL_DIR} ${GG_BACKUP_DIR}
+	echo "$0: Installing Greengrass core"
+	tar xzf "$1/${GG_CORE_TARFILE}" -C ${GG_ROOT_DIR} --exclude '*.jar' || exit 1
+	chown -R root:root ${GG_INSTALL_DIR}
+}
+
+install_resources()
+{
+	# Empty the certs directory (necessary to enable encryption)
+	rm -f ${GG_INSTALL_DIR}/certs/*
+	# Enable encyption, using hardware-enabled AES
+	fscryptctl set_policy --contents=AES-128-CBC --filenames=AES-128-CTS ffffffffffffffff ${GG_INSTALL_DIR}/certs
+	# Copy the first matching name for each certificate type
+	# (There should only be one but let's be secure.)
+	echo "$0: Copying public key."
+	cp "$1/certs/"*.public.key ${GG_INSTALL_DIR}/certs || exit 1
+	echo "$0: Copying private key."
+	cp "$1/certs/"*.private.key ${GG_INSTALL_DIR}/certs || exit 1
+	echo "$0: Copying certificate."
+	cp "$1/certs/"*.cert.pem ${GG_INSTALL_DIR}/certs || exit 1
+	# Copy root CA key
+	echo "$0: Copying root CA."
+	cp "$1/certs/root.ca.pem" "${GG_INSTALL_DIR}/certs/root.ca.pem" || exit 1
+	# Copy configuration file
+	echo "$0: Copying configuration JSON."
+	cp $1/config/config.json ${GG_INSTALL_DIR}/config || exit 1
+}
+
+
+case "$1" in
+	check)
+		# Spot check some GG directories and files
+		echo "$0: Checking install dir"
+		[ -x $GG_INSTALL_DIR ] || exit 1
+		echo "$0: Checking packages dir"
+		[ -x ${GG_INSTALL_DIR}/ggc/packages ] || exit 1
+		echo "$0: Checking deployment dir"
+		[ -x ${GG_INSTALL_DIR}/ggc/deployment ] || exit 1
+		echo "$0: Checking for greengrass daemon"
+		[ -x ${GG_INSTALL_DIR}/ggc/core/greengrassd ] || exit 1
+		echo "$0: Greengrass core is installed."
+		# Check for at least one of each cert type
+		echo "$0: Checking pubkey"
+		[ -e "${GG_INSTALL_DIR}/certs/"*.public.key ] || exit 1
+		echo "$0: Checking prvkey"
+		[ -e "${GG_INSTALL_DIR}/certs/"*.private.key ] || exit 1
+		echo "$0: Checking cert"
+		[ -e "${GG_INSTALL_DIR}/certs/"*.cert.pem ] || exit 1
+		echo "$0: Checking root CA"
+		[ -e ${GG_INSTALL_DIR}/certs/root.ca.pem ] || exit 1
+		echo "$0: Checking configuration"
+		[ -e ${GG_INSTALL_DIR}/config/config.json ] || exit 1
+		echo "$0: Configuration is valid."
+		exit 0
+		;;
+
+	install)
+		if [ $# -lt 2 ]; then
+			echo "$0: Must specify install source directory."
+			exit 1
+		fi
+
+		echo "$0: Stopping greengrass core"
+		systemctl stop ggrunner.service
+		SRCDIR="$2"
+
+		install_core $SRCDIR
+		if [ $# -eq 3 -a "$3" == "core-only" ]; then
+			install_resources $GG_BACKUP_DIR
+		else
+			install_resources $SRCDIR
+		fi
+
+		# Set date
+		echo "$0: Setting date via HTTP."
+		${SETDATE_HTTP}
+		# Apply BT firmware if it is present
+		if [ -e ${SRCDIR}/${BT_FW_FILENAME} ]; then
+			echo "Applying BL654 firmware."
+			${BT_FW_LOADER} ${BT_SERIAL_DEVICE} ${BT_SERIAL_BAUD} ${BT_FW_FILENAME} ${BT_DEVICE_TYPE} || exit 1
+		fi
+		# Start Greengrass!
+		echo "Starting Greengrass core."
+		systemctl start ggrunner.service
+		[ -d ${GG_BACKUP_DIR} ] && rm -rf ${GG_BACKUP_DIR}
+		exit 0
+		;;
+
+	restore)
+		if [ -d ${GG_BACKUP_DIR} ]; then
+			rm -rf ${GG_INSTALL_DIR}
+			mv ${GG_BACKUP_DIR} ${GG_INSTALL_DIR}
+			echo "Starting Greengrass core."
+			systemctl start ggrunner.service
+		fi
+		exit 0
+		;;
+esac
+echo "$0: Invalid option"
+exit 3
