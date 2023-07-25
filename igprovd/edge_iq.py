@@ -8,6 +8,9 @@ from requests.exceptions import RequestException
 from syslog import syslog
 import os
 from .prov_exceptions import *
+from .prov_status import *
+import tempfile
+import stat
 
 REQUEST_TIMEOUT = 30
 
@@ -16,80 +19,9 @@ OPT_DIR = "/opt"
 
 EDGEIQ_CONFIG = "/usr/bin/edge_iq_config"
 EDGE_DOMAIN = "http://api.edgeiq.io/"
-EDGE_FILE = "edge/edge"
-ASSETS_FILE = "edge-assets-latest.tar.gz"
-REMOTE_ASSETS_FILE = (
-    "http://api.edgeiq.io/api/v1/platform/downloads/latest/edge-assets-latest.tar.gz"
-)
-REMOTE_EDGE_FILE = (
-    "http://api.edgeiq.io/api/v1/platform/downloads/latest/edge-linux-arm7-latest"
-)
-BOOTSTRAP_CONFIG_FILE = "edge/conf/bootstrap.json"
-CONF_CONFIG_FILE = "edge/conf/conf.json"
+EDGECTL_NAME="edgectl"
+EDGECTL_URL="https://api.edgeiq.io/api/v1/platform/edgectl/latest/edgectl-linux-armhf-latest"
 ESCROW_TOKEN_FILE = "edge/escrow_token"
-
-
-def get_bootstrap_config(company_id):
-    return {
-        "company_id": company_id,
-        "platform": "laird",
-        "init_system": "systemd",
-        "network_configurer": "nmcli",
-        "local": False,
-    }
-
-
-def get_config(company_id, install_dir):
-    return {
-        "edge": {
-            "manufacturer": "generic",
-            "model": "linux",
-            "company": company_id,
-            "env": "prod",
-            "local": False,
-            "bypass_and_relay": False,
-            "init_system": "systemd",
-            "identifier_path": f"{install_dir}/edgeiq_bootstrap.json",
-            "ui_port": 9001,
-            "api_port": 9000,
-        },
-        "mqtt": {
-            "broker": {
-                "protocol": "ssl",
-                "host": "mqtt.ms-io.com",
-                "port": "443",
-                "username": "edge",
-                "password": "Dmn2LKZNcYSBd1PAbRMcmEKBG8EDpRjxc0BB5A==",
-                "escrow_token_path": f"{install_dir}/{ESCROW_TOKEN_FILE}",
-            },
-            "topics": {
-                "upstream": {
-                    "report": "reports",
-                    "heartbeat": "reports/hb",
-                    "config": "config",
-                    "action": "action",
-                    "new_version": "new_version",
-                    "lwt": "lwt",
-                    "status": "status",
-                    "log": "logs",
-                    "gateway_command_status": "gateway_command_status",
-                    "deployment_status": "deployment_status",
-                    "error": "error",
-                    "escrow_request": "escrow_request",
-                },
-                "downstream": {
-                    "config": "config",
-                    "command": "commands",
-                    "new_version": "new_version",
-                    "gateway_command": "gateway_commands",
-                    "escrow": "escrow",
-                },
-            },
-        },
-        "platform": {"url": "https://api.edgeiq.io/api/v1/platform/"},
-        "aws": {"greengrass": {"heartbeat_port": 9002}},
-    }
-
 
 class EdgeIQConfig:
     def __init__(self, update_state):
@@ -98,10 +30,6 @@ class EdgeIQConfig:
         self.company_id = None
         self.escrow_token = None
         self.install_dir = GG_DIR if os.path.isdir(GG_DIR) else OPT_DIR
-        self.bootstrap_config_file = f"{self.install_dir}/{BOOTSTRAP_CONFIG_FILE}"
-        self.config_file = f"{self.install_dir}/{CONF_CONFIG_FILE}"
-        self.assets_file = f"{self.install_dir}/{ASSETS_FILE}"
-        self.edge_file = f"{self.install_dir}/{EDGE_FILE}"
         self.token_file = f"{self.install_dir}/{ESCROW_TOKEN_FILE}"
 
     #
@@ -135,32 +63,27 @@ class EdgeIQConfig:
         return
 
     #
-    # start_core_download() - Download the Edge IQ assets and binary
+    # start_core_download() - Download the Edge IQ installation utility
     #
     def start_core_download(self):
+        self.update_state(PROV_INPROGRESS_DOWNLOADING)
         self.popen_log(["systemctl", "stop", "edge"])
-        self.download(REMOTE_ASSETS_FILE, self.assets_file)
-        self.popen_log(["tar", "xzvf", self.assets_file, "-C", self.install_dir])
-        self.popen_log(["rm", self.assets_file])
-        self.download(REMOTE_EDGE_FILE, self.edge_file)
-        self.popen_log(
-            [
-                "rm",
-                self.bootstrap_config_file,
-                self.config_file,
-            ]
-        )
+        self.tmpdir = tempfile.mkdtemp()
+        self.edgectl = self.tmpdir + "/" + EDGECTL_NAME
+        self.download(EDGECTL_URL, self.edgectl)
+        os.chmod(self.edgectl, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
 
-        # Create the bootstrap.json config
-        bootstrap = json.loads(json.dumps(get_bootstrap_config(self.company_id)))
-        with open(self.bootstrap_config_file, "w") as f:
-            json.dump(bootstrap, f, indent=4)
-
-        # Create the conf.json config
-        conf = json.loads(json.dumps(get_config(self.company_id, self.install_dir)))
-        with open(self.config_file, "w") as f:
-            json.dump(conf, f, indent=4)
-
+    #
+    # perform_core_update() - Call the edgectl utility to perform
+    # the Edge IQ installation.
+    #
+    def perform_core_update(self):
+        self.update_state(PROV_INPROGRESS_APPLYING)
+        install_cmd=f"{self.edgectl} install -p laird -t -d {self.install_dir} -c {self.company_id}"
+        result = self.popen_log(install_cmd.split())
+        os.remove(self.edgectl)
+        if result != 0:
+            raise RuntimeError("Failed to install Edge IQ.")
         # Create escrow token (if specified)
         if self.escrow_token is not None:
             syslog(
@@ -170,15 +93,9 @@ class EdgeIQConfig:
             )
             with open(self.token_file, "w") as f:
                 f.write(self.escrow_token)
-
-    #
-    # perform_core_update() - Call the edge_iq_config script to finish
-    # the Edge IQ installation.
-    #
-    def perform_core_update(self):
         result = self.popen_log([EDGEIQ_CONFIG, "install"])
         if result != 0:
-            raise RuntimeError("Failed to install Edge IQ.")
+            raise RuntimeError("Failed to install EdgeIQ.")
 
     #
     # check_config() - Check the status of the Edge IQ configuration.

@@ -13,31 +13,13 @@ import random
 from syslog import syslog
 from .ggconfig import GGConfig
 from .prov_exceptions import *
+from .prov_status import *
 import subprocess
 from .edge_iq import EdgeIQConfig
 
 import sys
 
-PYTHON3 = sys.version_info >= (3, 0)
-if PYTHON3:
-    from gi.repository import GObject as gobject
-else:
-    import gobject
-
-#
-# Provisioning status/states
-#
-PROV_COMPLETE_SUCCESS = 0
-PROV_UNPROVISIONED = 1
-PROV_INPROGRESS_DOWNLOADING = 2
-PROV_INPROGRESS_APPLYING = 3
-PROV_FAILED_INVALID = -1
-PROV_FAILED_CONNECT = -2
-PROV_FAILED_AUTH = -3
-PROV_FAILED_TIMEOUT = -4
-PROV_FAILED_NOT_FOUND = -5
-PROV_FAILED_BAD_CONFIG = -6
-PROV_FAILED_UNKNOWN = -7
+from gi.repository import GObject as gobject
 
 # Network Manager D-Bus interfaces
 NM_IFACE = "org.freedesktop.NetworkManager"
