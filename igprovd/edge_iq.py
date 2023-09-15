@@ -15,6 +15,7 @@ import stat
 REQUEST_TIMEOUT = 30
 
 GG_DIR = "/gg"
+PERM_DIR = "/perm"
 OPT_DIR = "/opt"
 
 EDGEIQ_CONFIG = "/usr/bin/edge_iq_config"
@@ -29,7 +30,12 @@ class EdgeIQConfig:
         self.endpoint_url = None
         self.company_id = None
         self.escrow_token = None
-        self.install_dir = GG_DIR if os.path.isdir(GG_DIR) else OPT_DIR
+        if os.path.isdir(GG_DIR):
+            self.install_dir = GG_DIR
+        elif os.path.isdir(PERM_DIR):
+            self.install_dir = PERM_DIR
+        else:
+            self.install_dir = OPT_DIR
         self.token_file = f"{self.install_dir}/{ESCROW_TOKEN_FILE}"
 
     #

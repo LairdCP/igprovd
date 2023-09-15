@@ -26,10 +26,13 @@ if [ $# -lt 1 ]; then
 fi
 
 GG_ROOT_DIR=/gg
+PERM_DIR=/perm
 OPT_DIR=/opt
 
 if [ -d ${GG_ROOT_DIR} ]; then
 	EDGE_INSTALL_DIR=${GG_ROOT_DIR}/edge
+elif [ -d ${PERM_DIR} ]; then
+	EDGE_INSTALL_DIR=${PERM_DIR}/edge
 else
 	EDGE_INSTALL_DIR=${OPT_DIR}/edge
 fi
@@ -57,14 +60,16 @@ case "$1" in
 		chmod +x ${EDGE_INSTALL_DIR}/edge
 
 		if [ -d ${GG_ROOT_DIR} ]; then
-	        	# Modify the edge.service file to use /gg
+			# Modify the edge.service file to use /gg
 			sed -i 's/ExecStart=\/opt\/edge\/edge/ExecStart=\/gg\/edge\/edge/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
-			sed -i 's/KillMode=process/KillMode=process\nKeyringMode=inherit/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
-			sed -i 's/StandardError=file:\/opt\/edge\/log\/stderr.log/StandardError=syslog/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
-			sed -i 's/ExecStart=\/opt\/greengrass\/ggc\/core\/greengrassd start/ExecStart=\/gg\/greengrass\/ggc\/core\/greengrassd start/' ${EDGE_INSTALL_DIR}/init/systemd/greengrass.service
-			sed -i 's/ExecReload=\/opt\/greengrass\/ggc\/core\/greengrassd restart/ExecReload=\/gg\/greengrass\/ggc\/core\/greengrassd restart/' ${EDGE_INSTALL_DIR}/init/systemd/greengrass.service
-			sed -i 's/ExecStop=\/opt\/greengrass\/ggc\/core\/greengrassd stop/ExecStop=\/gg\/greengrass\/ggc\/core\/greengrassd stop/' ${EDGE_INSTALL_DIR}/init/systemd/greengrass.service
+		elif [ -d ${PERM_DIR} ]; then
+			# Modify the edge.service file to use /perm
+			sed -i 's/ExecStart=\/opt\/edge\/edge/ExecStart=\/perm\/edge\/edge/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
 		fi
+		# Add KeyringMode
+		sed -i 's/KillMode=process/KillMode=process\nKeyringMode=inherit/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
+		# Change log to stdout
+		sed -i 's/StandardError=file:\/opt\/edge\/log\/stderr.log/StandardError=syslog/' ${EDGE_INSTALL_DIR}/init/systemd/edge.service
 
 		# Start edge
 		systemctl daemon-reload
